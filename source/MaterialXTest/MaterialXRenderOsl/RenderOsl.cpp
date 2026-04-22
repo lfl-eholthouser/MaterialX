@@ -15,7 +15,7 @@
 
 #include <MaterialXGenOsl/OslShaderGenerator.h>
 #include <MaterialXGenOsl/OslNetworkShaderGenerator.h>
-
+#include <MaterialXRenderOsl/TextureBaker.h>
 #include <MaterialXFormat/Util.h>
 
 namespace mx = MaterialX;
@@ -142,9 +142,14 @@ void OslShaderRenderTester::createRenderer(std::ostream& log)
     // oslc and testrender paths and OSL include path
     //
     const std::string oslcExecutable(MATERIALX_OSL_BINARY_OSLC);
-    _renderer->setOslCompilerExecutable(oslcExecutable);
+    _renderer->setCompilerExecutable(oslcExecutable);
     const std::string testRenderExecutable(MATERIALX_OSL_BINARY_TESTRENDER);
     _renderer->setOslTestRenderExecutable(testRenderExecutable);
+    const std::string testShadeExecutable(MATERIALX_OSL_BINARY_TESTSHADE);
+    if(!testShadeExecutable.empty())
+    {
+        _renderer->setOslTestShadeExecutable(testShadeExecutable);
+    }
     mx::FilePath oslStandardIncludePath = mx::FilePath(MATERIALX_OSL_INCLUDE_PATH);
     if (!oslStandardIncludePath.isEmpty())
     {
@@ -171,7 +176,7 @@ void OslShaderRenderTester::createRenderer(std::ostream& log)
         {
             mx::FileSearchPath searchPath = mx::getDefaultDataSearchPath();
             mx::FilePath shaderPath = searchPath.find("resources/Utilities/");
-            _renderer->setOslOutputFilePath(shaderPath);
+            _renderer->setOutputFilePath(shaderPath);
 
             const std::string OSL_EXTENSION("osl");
             for (const mx::FilePath& filename : shaderPath.getFilesInDirectory(OSL_EXTENSION))
@@ -284,9 +289,8 @@ bool OslShaderRenderTester::runRenderer(const std::string& shaderName,
             bool validated = false;
             try
             {
-                // Set renderer properties.
-                _renderer->setOslOutputFilePath(outputFilePath);
-                _renderer->setOslShaderName(shaderName);
+                _renderer->setOutputFilePath(outputFilePath);
+                _renderer->setShaderName(shaderName);
                 _renderer->setRaysPerPixelLit(testOptions.enableReferenceQuality ? 32 : 4);
                 _renderer->setRaysPerPixelUnlit(testOptions.enableReferenceQuality ? 8 : 1);
 
@@ -396,6 +400,101 @@ TEST_CASE("Render: OSL TestSuite", "[renderosl]")
 
     OslShaderRenderTester renderTester(mx::OslShaderGenerator::create(), false);
     renderTester.validate(optionsFilePath);
+}
+
+TEST_CASE("Render: OSL Texture Bake", "[renderoslbake]")
+{
+    if(std::string(MATERIALX_OSL_BINARY_OSLC).empty())
+    {
+            INFO("Skipping OSL texture bake test: MATERIALX_OSL_BINARY_OSLC not set.");
+            return;
+    }
+
+    mx::FileSearchPath searchPath = mx::getDefaultDataSearchPath();
+    // Load Material
+    INFO("Validating OSL Texture Baking")
+    mx::FilePath materialFile = searchPath.find("resources/Materials/Examples/StandardSurface/standard_surface_brick_procedural.mtlx");
+    REQUIRE(!materialFile.isEmpty());
+
+    mx::DocumentPtr doc = mx::createDocument();
+    mx::readFromXmlFile(doc, materialFile, searchPath);
+    mx::DocumentPtr stdLib = mx::createDocument();
+    mx::FilePathVec libraryFolders;
+    libraryFolders.push_back("libraries");
+    mx::StringSet xincludeFiles = mx::loadLibraries(libraryFolders, searchPath, stdLib);
+    doc->setDataLibrary(stdLib);
+
+    // Use a fixed small resolution for the test — actual baking res matters less here.
+    const unsigned int BAKE_SIZE = 1024;
+    mx::Image::BaseType baseType = mx::Image::BaseType::FLOAT;
+
+    // Build OSL include paths.
+    mx::FilePath oslStandardIncludePath = mx::FilePath(MATERIALX_OSL_INCLUDE_PATH);
+    mx::FileSearchPath oslIncludePaths;
+    if (!oslStandardIncludePath.isEmpty())
+        oslIncludePaths.append(oslStandardIncludePath);
+    oslIncludePaths.append(searchPath.find("libraries/stdlib/genosl/include"));
+
+    // Output to a subdirectory of the test output path.
+    mx::FilePath outputDir = searchPath.find("resources") / mx::FilePath("build/TestOslBake");
+    outputDir.createDirectory(true);
+
+    
+    auto baker = mx::TextureBakerOsl::create(BAKE_SIZE, BAKE_SIZE, baseType);
+    baker->setCompilerExecutable(std::string(MATERIALX_OSL_BINARY_OSLC));
+    baker->setOslIncludePath(oslIncludePaths);
+    baker->setOutputImagePath(outputDir);
+
+    // Bake materials (generates .osl + compiles to .oso)
+    mx::FileSearchPath extendedSearchPath = searchPath;
+    extendedSearchPath.append(mx::getSourceSearchPath(doc));
+    baker->bakeAllMaterials(doc, extendedSearchPath, outputDir / "baked_brick.mtlx");
+
+    // Verify the baked .mtlx was written.
+    CHECK((outputDir / "baked_brick.mtlx").exists());
+
+    // Verify at least one .oso file was produced.
+    mx::FilePathVec osoFiles = outputDir.getFilesInDirectory("oso");
+    CHECK(!osoFiles.empty());
+
+    //shadeOSL (renders each .oso to .png via testshade)
+    const std::string testShadeExecutable(MATERIALX_OSL_BINARY_TESTSHADE);
+    if (testShadeExecutable.empty())
+    {
+        INFO("Skipping shadeOSL step: MATERIALX_OSL_BINARY_TESTSHADE not set.");
+        return;
+    }
+
+    baker->setOslTestShadeExecutable(testShadeExecutable);
+
+    for (mx::NodePtr materialNode : doc->getMaterialNodes())
+    {
+        for (mx::InputPtr input : materialNode->getInputs())
+        {
+            mx::NodePtr surfaceShader = materialNode->getConnectedNode(input->getName());
+            if (!surfaceShader)
+                continue;
+
+            for (mx::InputPtr sInput : surfaceShader->getInputs())
+            {
+                mx::OutputPtr output = sInput->getConnectedOutput();
+                
+                if (!output)
+                    continue;
+                std::string materialName = materialNode->getName() + "_" +
+                                   surfaceShader->getCategory() + "_" +
+                                   sInput->getName();
+
+                
+                REQUIRE_NOTHROW(
+                    baker->shadeOSL(outputDir, materialName + ".oso",
+                                       output->getName()));
+
+                // The .exr should now exist.
+                CHECK((outputDir / (materialName + ".testshade.png")).exists());
+            }
+        }
+    }
 }
 
 #ifdef MATERIALX_BUILD_OSOS

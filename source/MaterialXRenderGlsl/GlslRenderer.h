@@ -89,7 +89,7 @@ class MX_RENDERGLSL_API GlslRenderer : public ShaderRenderer
     void render() override;
 
     /// Render the current program in texture space to an off-screen buffer.
-    void renderTextureSpace(const Vector2& uvMin, const Vector2& uvMax);
+    void renderTextureSpace(const Vector2& uvMin, const Vector2& uvMax) override;
 
     /// @}
     /// @name Utilities
@@ -125,6 +125,11 @@ class MX_RENDERGLSL_API GlslRenderer : public ShaderRenderer
         return _screenColor;
     }
 
+    //set srgb encoding
+    void setFramebufferEncodeSrgb(bool encode) override
+    {
+        _framebuffer->setEncodeSrgb(encode);
+    }
     /// @}
 
   protected:

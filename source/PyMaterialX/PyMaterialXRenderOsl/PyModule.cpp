@@ -7,6 +7,7 @@
 
 namespace py = pybind11;
 
+void bindPyTextureBakerOsl(py::module& mod);
 void bindPyOslRenderer(py::module& mod);
 
 PYBIND11_MODULE(PyMaterialXRenderOsl, mod)
@@ -17,4 +18,5 @@ PYBIND11_MODULE(PyMaterialXRenderOsl, mod)
     PYMATERIALX_IMPORT_MODULE(PyMaterialXRender);
 
     bindPyOslRenderer(mod);
+    bindPyTextureBakerOsl(mod);
 }

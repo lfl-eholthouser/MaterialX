@@ -32,7 +32,7 @@ TEST_CASE("GenReference: OSL Reference", "[genreference]")
     if (runCompileTest)
     {
         oslRenderer = mx::OslRenderer::create();
-        oslRenderer->setOslCompilerExecutable(MATERIALX_OSL_BINARY_OSLC);
+        oslRenderer->setCompilerExecutable(MATERIALX_OSL_BINARY_OSLC);
         mx::FileSearchPath oslIncludePaths;
         mx::FilePath oslStandardIncludePath = mx::FilePath(MATERIALX_OSL_INCLUDE_PATH);
         if (!oslStandardIncludePath.isEmpty())

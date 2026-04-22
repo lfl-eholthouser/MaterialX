@@ -6,12 +6,11 @@
 #include <MaterialXRender/OiioImageLoader.h>
 #include <MaterialXRender/StbImageLoader.h>
 #include <MaterialXRender/Util.h>
-
+#include <MaterialXFormat/Util.h>
 #include <MaterialXGenShader/DefaultColorManagementSystem.h>
 #ifdef MATERIALX_BUILD_OCIO
 #include <MaterialXGenShader/OcioColorManagementSystem.h>
 #endif
-
 #include <MaterialXFormat/XmlIo.h>
 
 MATERIALX_NAMESPACE_BEGIN
@@ -49,7 +48,7 @@ string TextureBaker<Renderer, ShaderGen>::getValueStringFromColor(const Color4& 
 }
 
 template <typename Renderer, typename ShaderGen>
-TextureBaker<Renderer, ShaderGen>::TextureBaker(unsigned int width, unsigned int height, Image::BaseType baseType, bool flipSavedImage) :
+TextureBaker<Renderer, ShaderGen>::TextureBaker(unsigned int width, unsigned int height, Image::BaseType baseType, bool flipSavedImage, bool hwRenderer, bool textureVerticalFlip) :
     Renderer(width, height, baseType),
     _distanceUnit("meter"),
     _averageImages(false),
@@ -64,8 +63,10 @@ TextureBaker<Renderer, ShaderGen>::TextureBaker(unsigned int width, unsigned int
     _generator(ShaderGen::create()),
     _permittedOverrides({ "$ASSET", "$MATERIAL", "$UDIMPREFIX" }),
     _flipSavedImage(flipSavedImage),
+    _textureVerticalFlip(textureVerticalFlip),
     _writeDocumentPerMaterial(true),
-    _bakedTextureDoc(nullptr)
+    _bakedTextureDoc(nullptr),
+    _hwRenderer(hwRenderer)
 {
     if (baseType == Image::BaseType::UINT8)
     {
@@ -86,18 +87,29 @@ TextureBaker<Renderer, ShaderGen>::TextureBaker(unsigned int width, unsigned int
         _colorSpace = LIN_REC709;
     }
 
-    // Initialize our base renderer.
-    Renderer::initialize();
+    if (_hwRenderer)
+    {
+        // Initialize our base renderer.
+        Renderer::initialize();
 
-    // Initialize our image handler.
-    Renderer::_imageHandler = Renderer::createImageHandler(StbImageLoader::create());
+        // Initialize our image handler.
+        Renderer::_imageHandler = Renderer::createImageHandler(StbImageLoader::create());
 #if MATERIALX_BUILD_OIIO
-    Renderer::_imageHandler->addLoader(OiioImageLoader::create());
+        Renderer::_imageHandler->addLoader(OiioImageLoader::create());
 #endif
 
-    // Create our dedicated frame capture image.
-    _frameCaptureImage = Image::create(width, height, 4, baseType);
-    _frameCaptureImage->createResourceBuffer();
+        // Create our dedicated frame capture image.
+        _frameCaptureImage = Image::create(width, height, 4, baseType);
+        _frameCaptureImage->createResourceBuffer();
+    }
+    else
+    {
+        Renderer::setCompilerExecutable(MATERIALX_OSL_BINARY_OSLC);
+        Renderer::initialize();
+        // Initialize our image handler.
+        Renderer::_imageHandler = Renderer::createImageHandler(StbImageLoader::create());
+    }
+    
 }
 
 template <typename Renderer, typename ShaderGen>
@@ -203,6 +215,7 @@ void TextureBaker<Renderer, ShaderGen>::bakeShaderInputs(NodePtr material, NodeP
                 output->setConnectedNode(worldSpaceNode->getConnectedNode("in"));
                 _worldSpaceNodes[input->getName()] = worldSpaceNode;
             }
+
             StringMap filenameTemplateMap = initializeFileTemplateMap(input, shader, udim);
             bakeGraphOutput(output, context, filenameTemplateMap);
         }
@@ -213,8 +226,12 @@ void TextureBaker<Renderer, ShaderGen>::bakeShaderInputs(NodePtr material, NodeP
         }
     }
 
-    // Release all images used to generate this set of shader inputs.
-    Renderer::_imageHandler->clearImageCache();
+    if (_hwRenderer)
+    {
+        // Release all images used to generate this set of shader inputs.
+        Renderer::_imageHandler->clearImageCache();
+    }
+    
 }
 
 template <typename Renderer, typename ShaderGen>
@@ -225,37 +242,65 @@ void TextureBaker<Renderer, ShaderGen>::bakeGraphOutput(OutputPtr output, GenCon
         return;
     }
 
-    bool encodeSrgb = _colorSpace == SRGB_TEXTURE && output->isColorType();
-    Renderer::getFramebuffer()->setEncodeSrgb(encodeSrgb);
-
     ShaderPtr shader = _generator->generate("BakingShader", output, context);
-    Renderer::createProgram(shader);
-
-    // Render and capture the requested image.
-    Renderer::renderTextureSpace(getTextureSpaceMin(), getTextureSpaceMax());
     string texturefilepath = generateTextureFilename(filenameTemplateMap);
-    Renderer::captureImage(_frameCaptureImage);
+    if (_hwRenderer)
+    {
 
-    // Construct a baked image record.
-    BakedImage baked;
-    baked.filename = texturefilepath;
-    if (_averageImages)
-    {
-        baked.uniformColor = _frameCaptureImage->getAverageColor();
-        baked.isUniform = true;
-    }
-    else if (_frameCaptureImage->isUniformColor(&baked.uniformColor))
-    {
-        baked.isUniform = true;
-    }
-    _bakedImageMap[output].push_back(baked);
+        bool encodeSrgb = _colorSpace == SRGB_TEXTURE && output->isColorType();
+        Renderer::setFramebufferEncodeSrgb(encodeSrgb);
+        Renderer::createProgram(shader);
 
-    // TODO: Write images to memory rather than to disk.
-    // Write non-uniform images to disk.
-    if (!baked.isUniform)
-    {
-        writeBakedImage(baked, _frameCaptureImage);
+        // Render and capture the requested image.
+        Renderer::renderTextureSpace(getTextureSpaceMin(), getTextureSpaceMax());
+        Renderer::captureImage(_frameCaptureImage);
+
+        // Construct a baked image record.
+        BakedImage baked;
+        baked.filename = texturefilepath;
+        if (_averageImages)
+        {
+            baked.uniformColor = _frameCaptureImage->getAverageColor();
+            baked.isUniform = true;
+        }
+        else if (_frameCaptureImage->isUniformColor(&baked.uniformColor))
+        {
+            baked.isUniform = true;
+        }
+        _bakedImageMap[output].push_back(baked);
+
+        // TODO: Write images to memory rather than to disk.
+        // Write non-uniform images to disk.
+        if (!baked.isUniform)
+        {
+            writeBakedImage(baked, _frameCaptureImage);
+        }
+
     }
+    else
+    {
+        
+        if (texturefilepath.find(".") != std::string::npos)
+        {
+            texturefilepath = texturefilepath.substr(0, texturefilepath.find("."));
+        }
+        
+        std::ofstream file;
+        file.open(texturefilepath + ".osl");
+        file << shader->getSourceCode();
+        file.close();
+
+        Renderer::setOutputFilePath(_outputImagePath);
+        std::string shaderName = texturefilepath.substr(_outputImagePath.asString().length() + 1, texturefilepath.length());
+        Renderer::setShaderName(shaderName);
+        Renderer::createProgram(shader);
+
+        // Construct a baked image record.
+        BakedImage baked;
+        baked.filename = texturefilepath;
+        _bakedImageMap[output].push_back(baked);
+    }
+  
 }
 
 template <typename Renderer, typename ShaderGen>
@@ -491,11 +536,12 @@ DocumentPtr TextureBaker<Renderer, ShaderGen>::bakeMaterialToDoc(DocumentPtr doc
     {
         *_outputStream << "Processing material: " << materialPath << std::endl;
     }
-
+   
+ 
     // Set up generator context for material
     GenContext genContext(_generator);
     genContext.getOptions().targetColorSpaceOverride = LIN_REC709;
-    genContext.getOptions().fileTextureVerticalFlip = true;
+    genContext.getOptions().fileTextureVerticalFlip = _textureVerticalFlip;
     genContext.getOptions().targetDistanceUnit = _distanceUnit;
 
     DefaultColorManagementSystemPtr cms;
@@ -518,6 +564,15 @@ DocumentPtr TextureBaker<Renderer, ShaderGen>::bakeMaterialToDoc(DocumentPtr doc
     _generator->setColorManagementSystem(cms);
     _generator->registerTypeDefs(doc);
 
+    // update document with absolute paths and explicit udim values in the filenames
+    // this is necessary if using test shade with osl texture baking
+    if (!_hwRenderer)
+    {
+         genContext.registerSourceCodeSearchPath(searchPath.find("libraries/stdlib/genosl/include"));
+         FileSearchPath extendedSearchPath = searchPath;
+         extendedSearchPath.append(getSourceSearchPath(doc));
+         mx::flattenFilenames(doc, extendedSearchPath);
+    }
     // Compute the material tag set.
     StringVec materialTags = udimSet;
     if (materialTags.empty())
@@ -538,25 +593,68 @@ DocumentPtr TextureBaker<Renderer, ShaderGen>::bakeMaterialToDoc(DocumentPtr doc
     {
         return nullptr;
     }
-
+    string prevUdim = EMPTY_STRING;
     StringResolverPtr resolver = StringResolver::create();
-
     // Iterate over material tags.
     for (const string& tag : materialTags)
     {
         // Always clear any cached implementations before generation.
-        genContext.clearNodeImplementations();
-
+        genContext.clearNodeImplementations();        
         ShaderPtr hwShader = createShader("Shader", genContext, shaderNode);
         if (!hwShader)
         {
             continue;
         }
-        Renderer::_imageHandler->setSearchPath(searchPath);
         resolver->setUdimString(tag);
-        Renderer::_imageHandler->setFilenameResolver(resolver);
-        bakeShaderInputs(materialNode, shaderNode, genContext, tag);
+        Renderer::_imageHandler->setFilenameResolver(resolver);  
+        
+        if (_hwRenderer)
+        {
+            Renderer::_imageHandler->setSearchPath(searchPath);
+        }
+        else
+        {
+            for (ElementPtr docElem : doc->traverseTree())
+            {
+                if (docElem->getActiveSourceUri() != doc->getSourceUri())
+                {
+                    continue;
+                }
 
+                InputPtr fileInput = docElem->asA<Input>();
+                if (fileInput && fileInput->getType() == FILENAME_TYPE_STRING)
+                {
+                     FilePath inputValue = FilePath(fileInput->getValueString());
+                    if (prevUdim == EMPTY_STRING)
+                    {
+                        StringResolverPtr filenameResolver = Renderer::_imageHandler->getFilenameResolver();
+                        fileInput->setValueString(fileInput->getResolvedValueString(filenameResolver));
+                    }
+                    else
+                    {
+                        // replace previous udim in texture name with current udim
+                        std::string baseName = inputValue.getBaseName();
+                        std::string newBaseName = baseName.replace(baseName.find(prevUdim), prevUdim.length(), tag);
+                        fileInput->setValueString(inputValue.asString().replace(inputValue.asString().find(inputValue.getBaseName()), baseName.length(), newBaseName));
+                    }
+                    if (!(FilePath(fileInput->getValueString()).isAbsolute()))
+                    {
+                        for (size_t i = 0; i < searchPath.size(); i++)
+                        {
+                            FilePath imagePath = searchPath[i] / fileInput->getValueString();
+                            imagePath = imagePath.getNormalized();
+                            if (imagePath.exists())
+                            {
+                                fileInput->setValueString(imagePath.asString());
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }   
+        bakeShaderInputs(materialNode, shaderNode, genContext, tag);
+        prevUdim = tag;
         // Optimize baked textures.
         optimizeBakedTextures(shaderNode);
     }
@@ -608,7 +706,9 @@ void TextureBaker<Renderer, ShaderGen>::bakeAllMaterials(DocumentPtr doc, const 
 
     if (_writeDocumentPerMaterial)
     {
-        // Write documents in memory to disk.
+        //Wrtie documents in memory to disk
+        XmlWriteOptions writeOptions;
+        writeOptions.writeXIncludeEnable = false;
         size_t bakeCount = bakedDocuments.size();
         for (size_t i = 0; i < bakeCount; i++)
         {
@@ -624,8 +724,7 @@ void TextureBaker<Renderer, ShaderGen>::bakeAllMaterials(DocumentPtr doc, const 
                     string filenameSeparator = writeFilename.isDirectory() ? EMPTY_STRING : "_";
                     writeFilename = FilePath(writeFilename.asString() + filenameSeparator + bakedDocuments[i].first + "." + extension);
                 }
-
-                writeToXmlFile(bakedDocuments[i].second, writeFilename);
+                writeToXmlFile(bakedDocuments[i].second, writeFilename, &writeOptions);
                 if (_outputStream)
                 {
                     *_outputStream << "Wrote baked document: " << writeFilename.asString() << std::endl;

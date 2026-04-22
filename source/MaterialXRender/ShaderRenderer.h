@@ -96,6 +96,15 @@ class MX_RENDER_API ShaderRenderer
         return _geometryHandler;
     }
 
+    virtual void renderTextureSpace(const Vector2& uvMin, const Vector2& uvMax) { }
+
+    virtual void setOutputFilePath(const FilePath& dirPath) { }
+
+    virtual void setShaderName(const string& shaderName) { }
+
+    virtual void setCompilerExecutable(const FilePath& executableFilePath) { }
+   
+    virtual void setFramebufferEncodeSrgb(bool encode) { }
     /// @}
     /// @name Rendering
     /// @{

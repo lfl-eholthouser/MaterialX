@@ -253,7 +253,7 @@ class TextureBaker : public Renderer
     using BakedConstantMap = std::unordered_map<OutputPtr, BakedConstant>;
 
   protected:
-    TextureBaker(unsigned int width, unsigned int height, Image::BaseType baseType, bool flipSavedImage);
+    TextureBaker(unsigned int width, unsigned int height, Image::BaseType baseType, bool flipSavedImage, bool hwRenderer, bool textureVerticalFlip);
 
     // Populate file template variable naming map
     StringMap initializeFileTemplateMap(InputPtr input, NodePtr shader, const string& udim = EMPTY_STRING);
@@ -297,6 +297,8 @@ class TextureBaker : public Renderer
     std::unordered_map<string, NodePtr> _worldSpaceNodes;
 
     bool _flipSavedImage;
+    bool _textureVerticalFlip;
+    bool _hwRenderer;
 
     bool _writeDocumentPerMaterial;
     DocumentPtr _bakedTextureDoc;

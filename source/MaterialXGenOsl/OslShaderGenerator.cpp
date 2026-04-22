@@ -340,7 +340,11 @@ void OslShaderGenerator::emitShaderInputs(const VariableBlock& inputs, ShaderSta
             // which gives a nicer shader interface with widget metadata on each input.
 
             ValuePtr value = input->getValue();
-            const string valueStr = value ? value->getValueString() : EMPTY_STRING;
+            string valueStr = value ? value->getValueString() : EMPTY_STRING;
+
+            //Force forward slashes to prevent texture lookup to fail silently on Windows since backslashes are
+            //are string literals in OSL
+            std::replace(valueStr.begin(), valueStr.end(), '\\', '/');
 
             // Add the file string input
             emitLineBegin(stage);

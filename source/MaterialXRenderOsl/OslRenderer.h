@@ -35,6 +35,11 @@ class MX_RENDEROSL_API OslRenderer : public ShaderRenderer
     /// Create an OSL renderer instance
     static OslRendererPtr create(unsigned int width = 512, unsigned int height = 512, Image::BaseType baseType = Image::BaseType::UINT8);
 
+    /// Create a texture handler for textures
+    ImageHandlerPtr createImageHandler(ImageLoaderPtr imageLoader)
+    {
+        return ImageHandler::create(imageLoader);
+    }
     /// Destructor
     virtual ~OslRenderer();
 
@@ -100,7 +105,7 @@ class MX_RENDEROSL_API OslRenderer : public ShaderRenderer
     /// Set the path to the OSL executable. Note that it is assumed that this
     /// references the location of the oslc executable.
     /// @param executableFilePath Path to OSL compiler executable
-    void setOslCompilerExecutable(const FilePath& executableFilePath)
+    void setCompilerExecutable(const FilePath& executableFilePath)
     {
         _oslCompilerExecutable = executableFilePath;
     }
@@ -115,7 +120,7 @@ class MX_RENDEROSL_API OslRenderer : public ShaderRenderer
 
     /// Set the location where compiled OSL files will reside.
     /// @param dirPath Path to output location
-    void setOslOutputFilePath(const FilePath& dirPath)
+    void setOutputFilePath(const FilePath& dirPath)
     {
         _oslOutputFilePath = dirPath;
     }
@@ -175,7 +180,7 @@ class MX_RENDEROSL_API OslRenderer : public ShaderRenderer
     /// Set the name of the shader to be used for the input XML scene file.
     /// The value is used to replace the %shader% token in the file.
     /// @param shaderName Name of shader
-    void setOslShaderName(const string& shaderName)
+    void setShaderName(const string& shaderName)
     {
         _oslShaderName = shaderName;
     }
@@ -228,7 +233,7 @@ class MX_RENDEROSL_API OslRenderer : public ShaderRenderer
     /// @param oslFilePath OSL file path.
     void compileOSL(const FilePath& oslFilePath);
 
-    /// @}
+    void shadeOSL(const FilePath& dirPath, const string& shaderName, const string& outputName);
 
   protected:
     ///
@@ -236,7 +241,7 @@ class MX_RENDEROSL_API OslRenderer : public ShaderRenderer
     /// @param dirPath Path to location containing input .oso file.
     /// @param shaderName Name of OSL shader. A corresponding .oso file is assumed to exist in the output path folder.
     /// @param outputName Name of OSL shader output to use.
-    void shadeOSL(const FilePath& dirPath, const string& shaderName, const string& outputName);
+   
 
     ///
     /// Render using OSO input file. Will throw an exception if an error occurs.

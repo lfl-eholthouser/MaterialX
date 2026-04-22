@@ -147,6 +147,7 @@ set(MATERIALX_INSTALL_STDLIB_PATH "libraries" CACHE STRING "Install path for mtl
 # Helpers for OSL validation
 set(MATERIALX_OSL_BINARY_OSLC "" CACHE FILEPATH "Full path to the OSL compiler binary.")
 set(MATERIALX_OSL_BINARY_TESTRENDER "" CACHE FILEPATH "Full path to the OSL test render binary.")
+set(MATERIALX_OSL_BINARY_TESTSHADE "" CACHE FILEPATH "Full path to the OSL test shade executable.")
 set(MATERIALX_OSL_INCLUDE_PATH "" CACHE PATH "Full path to OSL shader includes (e.g. 'stdosl.h').")
 
 # Helpers for Slang validation
@@ -285,6 +286,10 @@ if((MATERIALX_BUILD_RENDER AND MATERIALX_BUILD_GEN_OSL AND MATERIALX_BUILD_TESTS
         if(NOT MATERIALX_OSL_BINARY_TESTRENDER)
             # OSL does not yet export a CMake target for testrender.
             set(MATERIALX_OSL_BINARY_TESTRENDER $<TARGET_FILE_DIR:OSL::oslc>/testrender)
+        endif()
+        if(NOT MATERIALX_OSL_BINARY_TESTSHADE)
+            # OSL does not yet export a CMake target for testshade.
+            set(MATERIALX_OSL_BINARY_TESTSHADE $<TARGET_FILE_DIR:OSL::oslc>/testshade)
         endif()
         if(NOT MATERIALX_OSL_INCLUDE_PATH)
             # OSL does not yet export a CMake target for testrender.
